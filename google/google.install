@@ -1,0 +1,37 @@
+<?php
+
+function google_schema() {
+    $schema['google'] = array(
+        'description' => 'Table for google search results.',
+        'fields' => array(
+            'nid' => array(
+                'type' => 'serial',
+                'unsigned' => TRUE,
+                'not null' => TRUE),
+            'url' => array(
+                'type' => 'varchar',
+                'length' => 255,
+                'not null' => TRUE),
+            'title' => array(
+                'type' => 'varchar',
+                'length' => 255,
+                'not null' => TRUE),
+            'snippet' => array(
+                'type' => 'varchar',
+                'length' => 255,
+                'not null' => TRUE),
+        ),
+        'primary key' => array('nid'),
+    );
+    return $schema;
+}
+
+function google_install() {
+// Create my tables.
+    drupal_install_schema('google');
+}
+
+function google_uninstall() {
+// Drop my tables.
+    drupal_uninstall_schema('google');
+}

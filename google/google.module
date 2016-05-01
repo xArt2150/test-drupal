@@ -1,0 +1,264 @@
+<?php
+
+function google_init()
+{
+    $path = drupal_get_path('module', 'google');
+    drupal_add_js($path . '/google.js');
+}
+
+function google_menu()
+{
+    $items = array();
+    $items['hello-i-am-test-page'] = array(
+        'type' => MENU_SUGGESTED_ITEM,
+        'title' => 'Hello, I\'m test page',
+        'page callback' => 'google_page',
+        'access arguments' => array('access content'),
+    );
+
+    $items['hello-i-am-test-page/%/remove'] = array(
+        'type' => MENU_CALLBACK,
+        'page callback' => 'google_remove',
+        'page arguments' => array(1),
+        'access arguments' => array('access content'),
+    );
+
+    return $items;
+}
+
+function google_save_ajax_callback($form, $form_state)
+{
+    $id = $form_state['values']['id'];
+    $commands = array();
+
+    if( is_numeric($id) )
+    {
+        $data = array(
+            'url' => filter_xss($form_state['values']['url']),
+            'title' => filter_xss($form_state['values']['title']),
+            'snippet' => filter_xss($form_state['values']['snippet'])
+        );
+
+        db_update('google')->fields($data)
+            ->condition('nid', $id, '=')
+            ->execute();
+
+        $commands[] = ajax_command_remove('#msg');
+        $commands[] = ajax_command_before('#google_results', '<div class="alert alert-success" role="alert" id="msg">Saved</div>');
+
+        $commands[] = array
+        (
+            'command' => 'googleCloseModal',
+            'id' => $form_state['values']['id'],
+        );
+    }
+    else
+    {
+        $commands[] = ajax_command_remove('#msg');
+        $commands[] = ajax_command_before('#google_results', '<div class="alert alert-success" role="alert" id="msg">Error</div>');
+    }
+
+    $result = array(
+        '#type' => 'ajax',
+        '#commands' => $commands
+    );
+
+    ajax_deliver($result);
+    drupal_exit();
+}
+
+function google_remove($id)
+{
+    $commands = array();
+
+    if( is_numeric($id) )
+    {
+        try
+        {
+            db_delete('google')
+                ->condition('nid', $id)
+                ->execute();
+
+            $commands[] = ajax_command_remove('#msg');
+            $commands[] = ajax_command_before('#google_results', '<div class="alert alert-success" role="alert" id="msg">Removed</div>');
+            $commands[] = ajax_command_remove('#google_results .record_' . $id);
+        }
+        catch(Exception $e)
+        {
+            $commands[] = ajax_command_remove('#msg');
+            $commands[] = ajax_command_before('#google_results', '<div class="alert alert-danger" role="alert" id="msg">Error</div>');
+        }
+    }
+    else
+    {
+        $commands[] = ajax_command_remove('#msg');
+        $commands[] = ajax_command_before('#google_results', '<div class="alert alert-danger" role="alert" id="msg">Error</div>');
+    }
+
+    $result = array(
+        '#type' => 'ajax',
+        '#commands' => $commands,
+    );
+
+    ajax_deliver($result);
+    drupal_exit();
+}
+
+function google_results_ajax_callback()
+{
+    if( isset($_POST['query']) and trim($_POST['query']) != '')
+    {
+        $query = filter_xss_admin($_POST['query']);
+
+        // here we should retrieve data from google and save it to database
+        $data = file_get_contents("https://www.googleapis.com/customsearch/v1?key=AIzaSyCQmzFNbir0FPT8-cb6vVrVKQNxDN0Uqmg&cx=009354707597195592910:oekce14v33e&num=10&start=1&q=".$query);
+
+        clear_database();
+        save_json_data_to_database($data);
+        $data = retrieve_data_from_database();
+        $output = theme('google_results', array('data'=>$data));
+
+        $commands[] = ajax_command_remove('#msg');
+        $commands[] = ajax_command_before('#google_results', '<div class="alert alert-success" role="alert" id="msg">Ok</div>');
+        $commands[] = ajax_command_html('#google_results', $output);
+
+        $result = array(
+            '#type' => 'ajax',
+            '#commands' => $commands,
+        );
+
+        ajax_deliver($result);
+        drupal_exit();
+    }
+    else
+    {
+        $commands[] = ajax_command_remove('#msg');
+        $commands[] = ajax_command_before('#google_results', '<div class="alert alert-danger" role="alert" id="msg">Empty query</div>');
+
+        $result = array(
+            '#type' => 'ajax',
+            '#commands' => $commands,
+        );
+
+        ajax_deliver($result);
+        drupal_exit();
+    }
+}
+
+function google_page()
+{
+    $output = theme('google_page', array(
+        'data' => retrieve_data_from_database(),
+        'search_form' => drupal_get_form('google_search_form'),
+        'change_form' => drupal_get_form('google_change_form'),
+    ));
+
+    return $output;
+}
+
+function clear_database()
+{
+    db_query('truncate {google}');
+}
+
+function save_json_data_to_database($json)
+{
+    $data = json_decode($json);
+    foreach($data->items as $item)
+    {
+        $data = array(
+            'title' => $item->title,
+            'url' => $item->link,
+            'snippet' => $item->snippet,
+        );
+
+        drupal_write_record('google', $data);
+    }
+}
+
+function retrieve_data_from_database()
+{
+    $result = db_query('SELECT n.nid, n.url, n.title, n.snippet FROM {google} n');
+    return $result;
+}
+
+function google_search_form($form, &$form_state)
+{
+    $form = array();
+
+    $form['query'] = array(
+        '#type' => 'textfield',
+        '#attributes' => array('class'=>array('form-control'))
+    );
+
+    $form['submit'] = array(
+        '#type' => 'submit',
+        '#value' => 'Search',
+        '#attributes' => array('class' => array('btn btn-primary')),
+        '#ajax' => array(
+            'callback' => 'google_results_ajax_callback',
+        )
+    );
+
+    $form['#attributes'] = array('class' => array('google-form-ajax'));
+
+    return $form;
+}
+
+function google_change_form($form, &$form_state)
+{
+    $form = array();
+
+    $form['id'] = array(
+        '#type' => 'hidden',
+        '#attributes' => array('id'=>array('edit-id'))
+    );
+
+    $form['url'] = array(
+        '#type' => 'textfield',
+        '#title' => 'Url',
+        '#attributes' => array('class'=>array('form-control'))
+    );
+
+    $form['title'] = array(
+        '#type' => 'textfield',
+        '#title' => 'Title',
+        '#attributes' => array('class'=>array('form-control'))
+    );
+
+    $form['snippet'] = array(
+        '#type' => 'textarea',
+        '#title' => 'Snippet',
+        '#attributes' => array('class'=>array('form-control'))
+    );
+
+    $form['submit'] = array(
+        '#type' => 'submit',
+        '#value' => 'Save changes',
+        '#attributes' => array('class' => array('btn btn-primary')),
+        '#ajax' => array(
+            'callback' => 'google_save_ajax_callback',
+        )
+    );
+
+    return $form;
+}
+
+function google_theme($existing, $type, $theme, $path)
+{
+    $theme = array(
+        'google_page' => array(
+            'render element' => 'page',
+            'template' => 'index',
+            'path' => drupal_get_path('module', 'google') . '/templates',
+            'variables' => array('data' => NULL, 'form' => NULL),
+        ),
+        'google_results' => array(
+            'render element' => 'content',
+            'template' => 'results',
+            'path' => drupal_get_path('module', 'google') . '/templates',
+            'variables' => array('data' => NULL),
+        )
+    );
+    return $theme;
+}
